@@ -55,7 +55,7 @@ FAP/
 ├── AGENTS.md                          # this file
 ├── CLAUDE.md                          # quick-start project context
 ├── application.fam                    # dual-build FAP manifest (USB + BLE)
-├── claude_remote.c                    # main app (~1320 lines), all modes, #ifdef transport
+├── claude_remote.c                    # main app (~1900 lines), all modes, #ifdef transport
 ├── claude_remote.png                  # 10x10 1-bit app icon
 ├── images/                            # icon assets directory
 ├── update_manual.sh                   # regenerate manual .txt files for SD card
@@ -168,7 +168,7 @@ App(
 
 Four sub-views with hierarchical navigation:
 
-**Categories** → folder list with 5 categories + Quiz Mode
+**Categories** → folder list with 7 categories + Quiz Mode
 - Up/Down to scroll, OK/Right to enter, Back to home
 
 **Sections** → section list within selected category
@@ -177,18 +177,22 @@ Four sub-views with hierarchical navigation:
 **Reader** → scrollable text content (FontSecondary, ≤30 chars/line)
 - Up/Down to scroll text, Left/Right prev/next section, Back to section list
 
-**Quiz** → flashcard-style command quiz (12 cards)
-- OK to reveal answer, 1=knew it, 2=didn't know, Right=skip
-- Shows score at completion, OK to retry
+**Quiz** → mixed flashcard + multiple-choice quiz (24 cards, shuffled)
+- Flashcard: OK to reveal answer, Left=knew it, Up=didn't know, Right=skip
+- Multi-choice: Left/Up/Right to pick answer, OK to advance after feedback
+- Streak tracking (consecutive correct), best streak shown on completion
+- Fisher-Yates shuffle via hardware RNG each session
 
 ### Compiled-in Manual Content
 
-5 categories, ~17 sections total, all `static const`:
-- **Getting Started** (3): Installing Claude, First Launch, System Requirements
-- **Workspace** (4): Ideal Project Setup, CLAUDE.md Guide, The /init Command, .claude/ Directory
-- **Commands** (4): Navigation & Basics, Session Management, Configuration, Debugging
+7 categories, 29 sections total, all `static const`:
+- **Getting Started** (4): Installing Claude, First Launch, System Requirements, Authentication
+- **Workspace** (5): Ideal Project Setup, CLAUDE.md Guide, The /init Command, .claude/ Directory, Skills System
+- **Commands** (6): Navigation & Basics, Session Management, Configuration, Debugging, Slash Commands A-M, Slash Commands N-Z
 - **Tools** (3): File Operations, Search & Explore, Sub-agents & Web
-- **Workflows** (3): New Project Setup, Debug & Test, Code Review
+- **Workflows** (4): New Project Setup, Debug & Test, Code Review, Git & PRs
+- **Advanced** (4): Permissions, MCP Servers, Hooks, Extended Thinking
+- **Headless & CI** (3): Headless Mode, CI Integration, Model Selection
 
 ---
 

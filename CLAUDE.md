@@ -21,7 +21,7 @@ Before writing any code, read the relevant docs:
 
 ## Key Files
 
-- `claude_remote.c` — the entire app (~1320 lines). Four modes (splash, home, remote, manual) in one file with `#ifdef HID_TRANSPORT_BLE` / `HID_TRANSPORT_USB` for compile-time transport switching.
+- `claude_remote.c` — the entire app (~1900 lines). Four modes (splash, home, remote, manual) in one file with `#ifdef HID_TRANSPORT_BLE` / `HID_TRANSPORT_USB` for compile-time transport switching.
 - `application.fam` — two `App()` entries: `claude_remote_usb` and `claude_remote_ble` (named "Claupper").
 
 ## Build & Test

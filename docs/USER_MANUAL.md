@@ -227,12 +227,16 @@ Press Down or Left on the home screen to open the manual reader.
 | Right | Next chapter |
 | Back | Return to home screen |
 
-**Chapters (built-in):**
-1. Getting Started — what Claude Code is, how to launch it
-2. Keybindings — terminal shortcuts, approval prompts, voice
-3. Slash Commands — /help, /clear, /compact, /config, etc.
-4. Skills & Tools — what tools Claude has, custom skills
-5. Playbooks — step-by-step recipes for common tasks
+**Categories (built-in):**
+1. Getting Started — installing, first launch, system requirements, authentication
+2. Workspace — project setup, CLAUDE.md, /init, .claude/ directory, skills system
+3. Commands — navigation, session management, config, debugging, all slash commands (A-M, N-Z)
+4. Tools — file operations, search & explore, sub-agents & web
+5. Workflows — new project setup, debug & test, code review, git & PRs
+6. Advanced — permissions, MCP servers, hooks, extended thinking
+7. Headless & CI — headless mode, CI integration, model selection
+
+Plus a **Quiz Mode** with 24 shuffled cards (flashcard + multiple-choice), streak tracking, and score.
 
 Hold Up or Down to scroll continuously (repeat input is supported).
 
@@ -421,7 +425,7 @@ These PRD items are complete and working:
 - USB HID transport (stock firmware) and BLE HID transport (Momentum/Unleashed)
 - Orientation flip via short Back press
 - Long Back to return home from Remote mode
-- Claude Manual with 5 chapters (Getting Started, Keybindings, Slash Commands, Skills, Playbooks)
+- Claude Manual with 7 categories and 29 sections covering all major Claude Code features
 - Manual scrolling (Up/Down) and chapter switching (Left/Right)
 - SD card manual loading from `/ext/apps_data/claude_remote/manual/`
 - Numeric-prefix sorting for manual chapters
@@ -445,9 +449,8 @@ These were explicitly excluded from v1 and remain unbuilt:
 
 1. **Configurable keybindings** — store button-to-keycode mappings in a config file on SD card instead of hardcoding.
 2. **Visual feedback on key send** — flash the screen or show a brief "Sent: 1" overlay.
-3. **More manual chapters** — add sections for hooks, MCP servers, CLAUDE.md authoring.
-4. **Companion Mac app** — auto-detect Flipper USB HID and configure dictation shortcut.
-5. **Auto-Enter option** — configurable setting to send Enter automatically after number keys.
+3. **Companion Mac app** — auto-detect Flipper USB HID and configure dictation shortcut.
+4. **Auto-Enter option** — configurable setting to send Enter automatically after number keys.
 
 ---
 
