@@ -41,3 +41,17 @@ ufbt launch APPID=claude_remote_ble     # upload + run BLE version on connected 
 - Use `#ifdef HID_TRANSPORT_BLE` / `HID_TRANSPORT_USB` for any transport-specific code.
 - BLE connection detection: use `bt_set_status_changed_callback()` with `BtStatusConnected`, NOT `furi_hal_bt_is_active()`.
 - Always present the user with clickable options (AskUserQuestion tool) instead of asking them to type text.
+
+## Claupper Mode (MANDATORY)
+
+The user controls Claude Code with a Claupper remote (Flipper Zero) — 5 buttons: 1, 2, 3, Enter, and voice dictation. **Every single response that expects user input MUST end with exactly 3 numbered options using AskUserQuestion.** No exceptions.
+
+- **Option 1** = the action (what the user most likely wants — do it)
+- **Option 2** = the slower path (show details, review before committing)
+- **Option 3** = escape hatch (more options, different direction, or free text)
+- **Max 2 sentences** before presenting options. No walls of text.
+- **Never ask open-ended questions.** Infer from the codebase and present your best guess as option 1.
+- **Never have more or fewer than 3 options.** If there are more choices, paginate with option 3 = "More..."
+- **Auto-continue when safe.** If the next step is obvious and low-risk, just do it. Only pause for real decisions.
+- **Batch small decisions.** Don't micro-prompt. Bundle obvious choices into one action.
+- See `claupper_mode.md` for the full spec.

@@ -581,9 +581,12 @@ static void send_double_action(ClaudeRemoteState* state, InputKey key) {
     const char* label = NULL;
     switch(key) {
     case InputKeyLeft:
-        SEND_HID(state, HID_KEYBOARD_U | KEY_MOD_LEFT_CTRL);
+        /* Ctrl+A (start of line) then Ctrl+K (kill to end) = clear entire line */
+        SEND_HID(state, HID_KEYBOARD_A | KEY_MOD_LEFT_CTRL);
+        furi_delay_ms(30);
+        SEND_HID(state, HID_KEYBOARD_K | KEY_MOD_LEFT_CTRL);
         label = "Clear";
-        FURI_LOG_I(TAG, "Double: Ctrl+U (clear line)");
+        FURI_LOG_I(TAG, "Double: Ctrl+A,Ctrl+K (clear entire line)");
         break;
     case InputKeyUp:
         SEND_HID(state, HID_KEYBOARD_PAGE_UP);
@@ -723,27 +726,20 @@ static void draw_remote(Canvas* canvas, ClaudeRemoteState* state) {
 
     if(!state->hid_connected) {
         canvas_set_font(canvas, FontPrimary);
-        canvas_draw_str_aligned(canvas, 32, 20, AlignCenter, AlignCenter, "Waiting...");
-        canvas_draw_line(canvas, 8, 28, 56, 28);
+        canvas_draw_str_aligned(canvas, 32, 30, AlignCenter, AlignCenter, "Not");
+        canvas_draw_str_aligned(canvas, 32, 44, AlignCenter, AlignCenter, "Connected");
         canvas_set_font(canvas, FontSecondary);
 #ifdef HID_TRANSPORT_BLE
         if(state->use_ble) {
-            canvas_draw_str_aligned(canvas, 32, 42, AlignCenter, AlignCenter, "On your Mac:");
-            canvas_draw_str_aligned(canvas, 32, 54, AlignCenter, AlignCenter, "System Settings");
-            canvas_draw_str_aligned(canvas, 32, 64, AlignCenter, AlignCenter, "> Bluetooth");
-            canvas_draw_str_aligned(canvas, 32, 76, AlignCenter, AlignCenter, "Look for Flipper");
-            canvas_draw_str_aligned(canvas, 32, 86, AlignCenter, AlignCenter, "and click Connect");
-            canvas_draw_str_aligned(canvas, 32, 104, AlignCenter, AlignCenter, "Already paired?");
-            canvas_draw_str_aligned(canvas, 32, 114, AlignCenter, AlignCenter, "It auto-connects.");
+            canvas_draw_str_aligned(canvas, 32, 64, AlignCenter, AlignCenter, "Connect via");
+            canvas_draw_str_aligned(canvas, 32, 74, AlignCenter, AlignCenter, "Bluetooth");
         } else {
-            canvas_draw_str_aligned(canvas, 32, 46, AlignCenter, AlignCenter, "Plug Flipper in");
-            canvas_draw_str_aligned(canvas, 32, 58, AlignCenter, AlignCenter, "via USB-C cable");
-            canvas_draw_str_aligned(canvas, 32, 78, AlignCenter, AlignCenter, "Keys send over");
-            canvas_draw_str_aligned(canvas, 32, 88, AlignCenter, AlignCenter, "USB — no BT needed");
+            canvas_draw_str_aligned(canvas, 32, 64, AlignCenter, AlignCenter, "Connect via");
+            canvas_draw_str_aligned(canvas, 32, 74, AlignCenter, AlignCenter, "USB-C cable");
         }
 #else
-        canvas_draw_str_aligned(canvas, 32, 46, AlignCenter, AlignCenter, "Plug Flipper in");
-        canvas_draw_str_aligned(canvas, 32, 58, AlignCenter, AlignCenter, "via USB-C cable");
+        canvas_draw_str_aligned(canvas, 32, 64, AlignCenter, AlignCenter, "Connect via");
+        canvas_draw_str_aligned(canvas, 32, 74, AlignCenter, AlignCenter, "USB-C cable");
 #endif
         return;
     }
