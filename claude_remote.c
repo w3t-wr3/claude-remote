@@ -1320,7 +1320,11 @@ static int32_t claude_remote_main(void* p) {
     state->bt = furi_record_open(RECORD_BT);
     bt_disconnect(state->bt);
     furi_delay_ms(200);
-    state->ble_profile = bt_profile_start(state->bt, ble_profile_hid, NULL);
+    BleProfileHidParams hid_params = {
+        .device_name_prefix = "Claupr",
+        .mac_xor = 0,
+    };
+    state->ble_profile = bt_profile_start(state->bt, ble_profile_hid, &hid_params);
     bt_set_status_changed_callback(state->bt, bt_status_callback, state);
     FURI_LOG_I(TAG, "BLE HID profile started");
 #else
