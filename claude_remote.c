@@ -4,6 +4,8 @@
 #include <gui/gui.h>
 #include <gui/view_port.h>
 #include <input/input.h>
+#include <notification/notification.h>
+#include <notification/notification_messages.h>
 
 #ifdef HID_TRANSPORT_BLE
 #include <bt/bt_service/bt.h>
@@ -17,6 +19,21 @@
 #endif
 
 #define TAG "CRemote"
+
+/* ── Claude orange LED ── */
+
+static const NotificationMessage message_green_128 = {
+    .type = NotificationMessageTypeLedGreen,
+    .data.led.value = 128,
+};
+
+static const NotificationSequence sequence_solid_orange = {
+    &message_red_255,
+    &message_green_128,
+    &message_blue_0,
+    &message_do_not_reset,
+    NULL,
+};
 
 /* ── Modes ── */
 
@@ -1304,6 +1321,9 @@ static int32_t claude_remote_main(void* p) {
     state->splash_start = furi_get_tick();
     state->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
 
+    NotificationApp* notifications = furi_record_open(RECORD_NOTIFICATION);
+    notification_message(notifications, &sequence_solid_orange);
+
     FuriMessageQueue* queue = furi_message_queue_alloc(8, sizeof(InputEvent));
 
     ViewPort* view_port = view_port_alloc();
@@ -1320,11 +1340,7 @@ static int32_t claude_remote_main(void* p) {
     state->bt = furi_record_open(RECORD_BT);
     bt_disconnect(state->bt);
     furi_delay_ms(200);
-    BleProfileHidParams hid_params = {
-        .device_name_prefix = "Claupr",
-        .mac_xor = 0,
-    };
-    state->ble_profile = bt_profile_start(state->bt, ble_profile_hid, &hid_params);
+    state->ble_profile = bt_profile_start(state->bt, ble_profile_hid, NULL);
     bt_set_status_changed_callback(state->bt, bt_status_callback, state);
     FURI_LOG_I(TAG, "BLE HID profile started");
 #else
@@ -1397,6 +1413,9 @@ static int32_t claude_remote_main(void* p) {
     }
 
     FURI_LOG_I(TAG, "Exiting Claude Remote");
+
+    notification_message(notifications, &sequence_reset_rgb);
+    furi_record_close(RECORD_NOTIFICATION);
 
 #ifdef HID_TRANSPORT_BLE
     bt_set_status_changed_callback(state->bt, NULL, NULL);
