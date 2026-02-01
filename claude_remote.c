@@ -410,6 +410,10 @@ typedef struct {
     uint32_t dc_tick;
     bool dc_pending;
 
+    /* visual feedback flash */
+    uint32_t flash_tick;
+    const char* flash_label;
+
     /* splash screen */
     uint32_t splash_start;
 } ClaudeRemoteState;
@@ -501,64 +505,85 @@ static const uint8_t wetware_logo[] = {
 #endif
 
 #define DC_TIMEOUT_TICKS 300 /* ~300ms at 1kHz tick */
+#define FLASH_DURATION_TICKS 200 /* ~200ms visual feedback */
 
 static void flush_pending_single(ClaudeRemoteState* state) {
     if(!state->dc_pending) return;
     state->dc_pending = false;
     if(!state->hid_connected) return;
 
+    const char* label = NULL;
     switch(state->dc_key) {
     case InputKeyLeft:
         SEND_HID(state, HID_KEYBOARD_1);
+        label = "1";
         FURI_LOG_I(TAG, "Sent: 1");
         break;
     case InputKeyUp:
         SEND_HID(state, HID_KEYBOARD_2);
+        label = "2";
         FURI_LOG_I(TAG, "Sent: 2");
         break;
     case InputKeyRight:
         SEND_HID(state, HID_KEYBOARD_3);
+        label = "3";
         FURI_LOG_I(TAG, "Sent: 3");
         break;
     case InputKeyOk:
         SEND_HID(state, HID_KEYBOARD_RETURN);
+        label = "Enter";
         FURI_LOG_I(TAG, "Sent: Enter");
         break;
     case InputKeyDown:
         SEND_CONSUMER(state, HID_CONSUMER_DICTATION);
+        label = "Dictate";
         FURI_LOG_I(TAG, "Sent: Dictation (consumer 0x00CF)");
         break;
     default:
         break;
+    }
+    if(label) {
+        state->flash_label = label;
+        state->flash_tick = furi_get_tick();
     }
 }
 
 static void send_double_action(ClaudeRemoteState* state, InputKey key) {
     if(!state->hid_connected) return;
 
+    const char* label = NULL;
     switch(key) {
     case InputKeyLeft:
         SEND_HID(state, HID_KEYBOARD_W | KEY_MOD_LEFT_CTRL);
+        label = "Del Word";
         FURI_LOG_I(TAG, "Double: Ctrl+W (delete word)");
         break;
     case InputKeyUp:
         SEND_HID(state, HID_KEYBOARD_PAGE_UP);
+        label = "Pg Up";
         FURI_LOG_I(TAG, "Double: Page Up");
         break;
     case InputKeyRight:
         SEND_HID(state, HID_KEYBOARD_UP_ARROW);
+        label = "Prev Cmd";
         FURI_LOG_I(TAG, "Double: Up Arrow (prev command)");
         break;
     case InputKeyOk:
         SEND_HID(state, HID_KEYBOARD_GRAVE_ACCENT | KEY_MOD_LEFT_GUI);
+        label = "Switch";
         FURI_LOG_I(TAG, "Double: Cmd+` (switch window)");
         break;
     case InputKeyDown:
         SEND_HID(state, HID_KEYBOARD_PAGE_DOWN);
+        label = "Pg Down";
         FURI_LOG_I(TAG, "Double: Page Down");
         break;
     default:
         break;
+    }
+    if(label) {
+        state->flash_label = label;
+        state->flash_tick = furi_get_tick();
     }
 }
 
@@ -729,6 +754,15 @@ static void draw_remote(Canvas* canvas, ClaudeRemoteState* state) {
     canvas_draw_line(canvas, 32, 95, 29, 92);
     canvas_draw_line(canvas, 32, 95, 35, 92);
 
+    /* Flash overlay: inverted bar showing what was sent */
+    if(state->flash_label &&
+       (furi_get_tick() - state->flash_tick) < FLASH_DURATION_TICKS) {
+        canvas_draw_box(canvas, 0, 102, 64, 26);
+        canvas_set_color(canvas, ColorWhite);
+        canvas_set_font(canvas, FontPrimary);
+        canvas_draw_str_aligned(canvas, 32, 115, AlignCenter, AlignCenter, state->flash_label);
+        canvas_set_color(canvas, ColorBlack);
+    }
 }
 
 /* ── Manual: Category list (landscape 128x64) ── */
