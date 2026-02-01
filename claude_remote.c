@@ -538,20 +538,24 @@ static void send_double_action(ClaudeRemoteState* state, InputKey key) {
 
     switch(key) {
     case InputKeyLeft:
-        SEND_HID(state, HID_KEYBOARD_DELETE);
-        FURI_LOG_I(TAG, "Double: Backspace");
+        SEND_HID(state, HID_KEYBOARD_DELETE | KEY_MOD_LEFT_ALT);
+        FURI_LOG_I(TAG, "Double: Option+Backspace (delete word)");
         break;
     case InputKeyUp:
         SEND_HID(state, HID_KEYBOARD_PAGE_UP);
         FURI_LOG_I(TAG, "Double: Page Up");
         break;
     case InputKeyRight:
-        SEND_HID(state, HID_KEYBOARD_ESCAPE);
-        FURI_LOG_I(TAG, "Double: Escape");
+        SEND_HID(state, HID_KEYBOARD_UP_ARROW);
+        FURI_LOG_I(TAG, "Double: Up Arrow (prev command)");
         break;
     case InputKeyOk:
-        SEND_HID(state, HID_KEYBOARD_TAB | KEY_MOD_LEFT_CTRL);
-        FURI_LOG_I(TAG, "Double: Ctrl+Tab (switch tab)");
+        SEND_HID(state, HID_KEYBOARD_GRAVE_ACCENT | KEY_MOD_LEFT_GUI);
+        FURI_LOG_I(TAG, "Double: Cmd+` (switch window)");
+        break;
+    case InputKeyDown:
+        SEND_HID(state, HID_KEYBOARD_PAGE_DOWN);
+        FURI_LOG_I(TAG, "Double: Page Down");
         break;
     default:
         break;
@@ -1052,15 +1056,15 @@ static bool handle_remote_input(
     ClaudeRemoteState* state,
     InputEvent* event,
     ViewPort* view_port) {
-    if(event->key == InputKeyBack && event->type == InputTypeShort) {
+    if(event->type != InputTypeShort) return true;
+
+    if(event->key == InputKeyBack) {
         flush_pending_single(state);
         state->mode = ModeHome;
         state->is_flipped = false;
         view_port_set_orientation(view_port, ViewPortOrientationVertical);
         return true;
     }
-
-    if(event->type != InputTypeShort) return true;
 
 #ifndef HID_TRANSPORT_BLE
     state->hid_connected = furi_hal_hid_is_connected();
@@ -1071,7 +1075,7 @@ static bool handle_remote_input(
     uint32_t now = furi_get_tick();
     if(state->dc_pending && event->key == state->dc_key &&
        (now - state->dc_tick) < DC_TIMEOUT_TICKS) {
-        /* double-click detected (Left/Up/Right only) */
+        /* double-click detected */
         state->dc_pending = false;
         send_double_action(state, event->key);
     } else {
