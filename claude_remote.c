@@ -617,6 +617,7 @@ static const ManualCategory categories[] = {
 
 /* ── Settings & Macros constants ── */
 
+#define APP_DATA_DIR APP_DATA_PATH("")
 #define SETTINGS_PATH APP_DATA_PATH("settings.cfg")
 #define SETTINGS_COUNT 3
 
@@ -739,7 +740,7 @@ typedef struct {
     /* settings */
     bool haptics_enabled;
     bool led_enabled;
-    bool os_windows;
+    uint8_t os_mode; /* 0=Mac, 1=Windows, 2=Linux */
     uint8_t settings_index;
 
     /* macros */
@@ -776,7 +777,7 @@ static void quiz_shuffle(ClaudeRemoteState* state) {
 static void load_settings(ClaudeRemoteState* state) {
     state->haptics_enabled = true;
     state->led_enabled = true;
-    state->os_windows = false;
+    state->os_mode = 0;
 
     Storage* storage = furi_record_open(RECORD_STORAGE);
     File* file = storage_file_alloc(storage);
@@ -794,7 +795,9 @@ static void load_settings(ClaudeRemoteState* state) {
             } else if(strncmp(p, "led=", 4) == 0) {
                 state->led_enabled = (p[4] == '1');
             } else if(strncmp(p, "os=", 3) == 0) {
-                state->os_windows = (p[3] == 'w');
+                if(p[3] == 'w') state->os_mode = 1;
+                else if(p[3] == 'l') state->os_mode = 2;
+                else state->os_mode = 0;
             }
             while(*p && *p != '\n') p++;
             if(*p == '\n') p++;
@@ -809,6 +812,7 @@ static void load_settings(ClaudeRemoteState* state) {
 
 static void save_settings(ClaudeRemoteState* state) {
     Storage* storage = furi_record_open(RECORD_STORAGE);
+    storage_simply_mkdir(storage, APP_DATA_DIR);
     File* file = storage_file_alloc(storage);
 
     if(storage_file_open(file, SETTINGS_PATH, FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
@@ -816,7 +820,7 @@ static void save_settings(ClaudeRemoteState* state) {
         int len = snprintf(buf, sizeof(buf), "haptics=%d\nled=%d\nos=%s\n",
                            state->haptics_enabled ? 1 : 0,
                            state->led_enabled ? 1 : 0,
-                           state->os_windows ? "win" : "mac");
+                           state->os_mode == 1 ? "win" : state->os_mode == 2 ? "linux" : "mac");
         storage_file_write(file, buf, len);
         storage_file_close(file);
     } else {
@@ -1040,7 +1044,7 @@ static void flush_pending_single(ClaudeRemoteState* state) {
         FURI_LOG_I(TAG, "Sent: Enter");
         break;
     case InputKeyDown:
-        if(state->os_windows) {
+        if(state->os_mode == 1) {
             SEND_HID(state, HID_KEYBOARD_H | KEY_MOD_LEFT_GUI);
             label = "Voice";
             FURI_LOG_I(TAG, "Sent: Win+H (Windows Voice Typing)");
@@ -1086,14 +1090,14 @@ static void send_double_action(ClaudeRemoteState* state, InputKey key) {
         FURI_LOG_I(TAG, "Double: Up Arrow (prev command)");
         break;
     case InputKeyOk:
-        if(state->os_windows) {
-            SEND_HID(state, HID_KEYBOARD_TAB | KEY_MOD_LEFT_ALT);
-            label = "Switch";
-            FURI_LOG_I(TAG, "Double: Alt+Tab (switch window)");
-        } else {
+        if(state->os_mode == 0) {
             SEND_HID(state, HID_KEYBOARD_GRAVE_ACCENT | KEY_MOD_LEFT_GUI);
             label = "Switch";
             FURI_LOG_I(TAG, "Double: Cmd+` (switch window)");
+        } else {
+            SEND_HID(state, HID_KEYBOARD_TAB | KEY_MOD_LEFT_ALT);
+            label = "Switch";
+            FURI_LOG_I(TAG, "Double: Alt+Tab (switch window)");
         }
         break;
     case InputKeyDown:
@@ -1673,7 +1677,7 @@ static void draw_settings(Canvas* canvas, ClaudeRemoteState* state) {
         const char* val_str;
         if(i == 0) val_str = state->haptics_enabled ? "[ON]" : "[OFF]";
         else if(i == 1) val_str = state->led_enabled ? "[ON]" : "[OFF]";
-        else val_str = state->os_windows ? "[Win]" : "[Mac]";
+        else val_str = state->os_mode == 1 ? "[Win]" : state->os_mode == 2 ? "[Linux]" : "[Mac]";
         canvas_draw_str_aligned(canvas, 110, y, AlignRight, AlignBottom, val_str);
     }
 
@@ -2123,11 +2127,11 @@ static bool handle_settings_input(ClaudeRemoteState* state, InputEvent* event, V
         } else if(state->settings_index == 1) {
             state->led_enabled = !state->led_enabled;
         } else if(state->settings_index == 2) {
-            state->os_windows = !state->os_windows;
+            state->os_mode = (state->os_mode + 1) % 3;
         }
+        save_settings(state);
         break;
     case InputKeyBack:
-        save_settings(state);
         state->mode = ModeHome;
         if(state->led_enabled) {
             notification_message(state->notifications, &sequence_solid_orange);
