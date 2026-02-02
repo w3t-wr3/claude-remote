@@ -12,6 +12,26 @@ Approve changes while you're reading docs on your phone. Decline from the couch.
 
 Five buttons. No keyboard required.
 
+---
+
+## ⚠ Two Apps, One Codebase — Read This First
+
+Claupper ships as **two separate `.fap` files** because Flipper Zero has two completely different HID stacks depending on your firmware:
+
+| | **Claupper BLE** | **Claupper USB** |
+|---|---|---|
+| **File** | `claude_remote_ble.fap` | `claude_remote_usb.fap` |
+| **Firmware** | Momentum or Unleashed | Stock (official) |
+| **Connection** | Bluetooth wireless | USB cable |
+| **Best for** | Couch mode, across the room | Desk use, no pairing needed |
+| **App menu** | Apps → Bluetooth → Claupper BLE | Apps → Bluetooth → Claupper USB |
+
+**Why two apps?** Stock Flipper firmware doesn't expose the BLE HID profile to external apps — only custom firmwares (Momentum, Unleashed) unlock it. So we compile the same source code twice: once with USB-only HID, once with BLE + USB. The BLE build is the primary version. The USB build exists so stock firmware users aren't left out.
+
+**Install the one that matches your firmware.** If you're on Momentum or Unleashed, grab the BLE version. If you're on stock, grab USB. They're functionally identical — same remote, same manual, same macros, same settings — just different transport.
+
+---
+
 ## Remote Mode
 
 Every interaction with Claude Code boils down to choosing option 1, 2, or 3, then hitting Enter. Claupper maps these to the Flipper's d-pad:
@@ -21,16 +41,17 @@ Every interaction with Claude Code boils down to choosing option 1, 2, or 3, the
 | Left | `1` (approve/yes) | **Clear entire line** |
 | Up | `2` (decline/no) | Page Up |
 | Right | `3` (other/skip) | **Previous command** (history recall) |
-| OK | Enter (confirm) | **Cmd+`** (switch terminal window) |
-| Down | **Voice dictation** | Page Down |
-| Back | Return home | — |
+| OK | Enter (confirm) | **Switch window** (Cmd+\` on Mac, Alt+Tab on Win/Linux) |
+| Down | **Voice dictation** (Mac/Linux) / **Win+H** (Windows) | Page Down |
+| Back (short) | Return home | — |
+| Back (long) | **Send Escape key** | — |
 
 ### Double-Click Actions
 
 The double-click layer is where it gets powerful:
 
 - **Clear entire line** (double-Left) — Sends `Ctrl+A` then `Ctrl+K`: jumps to the start of the line and kills everything to the end. One gesture wipes the entire input buffer. Works in any terminal, any shell.
-- **Cmd+`** (double-OK) — Instantly cycles between terminal windows without touching your computer. Bounce between Claude Code and your shell, your logs, your test runner — all from the Flipper.
+- **Switch window** (double-OK) — Cmd+\` on Mac, Alt+Tab on Windows/Linux. Instantly cycle between terminal windows from the Flipper.
 - **Previous command** (double-Right) — Sends Up Arrow to recall the last terminal command. Re-run tests, restart servers, repeat builds.
 - **Page Up / Page Down** (double-Up / double-Down) — Scroll through long Claude Code output without reaching for your keyboard.
 
@@ -68,14 +89,66 @@ For the best experience, add `claupper_mode.md` to your project as `CLAUDE.md` (
 
 See [`claupper_mode.md`](claupper_mode.md) for the full template.
 
-## Two Builds
+## Settings
 
-| Build | Firmware | Transport | Name on Flipper |
-|-------|----------|-----------|-----------------|
-| `claude_remote_usb` | Stock | USB HID | Claupper USB |
-| `claude_remote_ble` | Momentum / Unleashed | Bluetooth HID | Claupper BLE |
+Access from the Home screen (Left button). Three options:
 
-The BLE version is the primary build — wireless control from anywhere in the room. The USB version works on stock firmware for users who don't want to switch.
+| Setting | Values | Default |
+|---------|--------|---------|
+| **Haptics** | ON / OFF | ON |
+| **LED** | ON / OFF | ON |
+| **OS** | Mac / Win / Linux | Mac |
+
+Press OK to toggle. Changes save automatically. Back returns to Home.
+
+The **OS setting** controls platform-specific keybindings:
+- **Mac** — Voice dictation via macOS Dictation (Fn Fn), window switch via Cmd+\`
+- **Windows** — Voice dictation via Win+H, window switch via Alt+Tab
+- **Linux** — Voice dictation via consumer key passthrough, window switch via Alt+Tab
+
+## Custom Macros
+
+Load up to 10 custom text macros from an SD card file. Navigate to Macros from the Home screen (Up button).
+
+**Setup:**
+1. Create a file at `SD Card/apps_data/<appid>/macros.txt` on your Flipper
+   - BLE build: `apps_data/claude_remote_ble/macros.txt`
+   - USB build: `apps_data/claude_remote_usb/macros.txt`
+2. Add one macro per line (max 32 characters each, max 10 lines)
+3. Open Macros from the Home screen — scroll with Up/Down, press OK to send
+
+Each macro is typed out character-by-character via HID and followed by Enter — as if you typed it on the keyboard.
+
+**Preset templates** are included in the `macros/` directory:
+
+| File | Style |
+|------|-------|
+| `default.txt` | Balanced mix of commands and prompts |
+| `minimal.txt` | Slash commands only |
+| `maximalist.txt` | Detailed natural-language prompts |
+| `barebones.txt` | Just approval keys and basics |
+| `workflow.txt` | Full dev cycle (init → code → test → commit) |
+| `debugging.txt` | Bug hunting and diagnostics |
+| `review.txt` | Code review prompts |
+
+Copy any preset to your Flipper's `macros.txt` path to use it.
+
+## Haptic Feedback
+
+When enabled (default), the Flipper vibrates on every keypress:
+- **Single pulse** on regular key sends (1, 2, 3, Enter, etc.)
+- **Double pulse** on double-click actions (Clear, Switch, Previous, Page Up/Down)
+
+Toggle in Settings.
+
+## LED Indicators
+
+When enabled (default), the Flipper LED shows which mode you're in:
+- **Blue** — Remote mode (USB or BLE)
+- **Green** — Manual mode
+- **Orange** — Home, Settings, or Macros
+
+Toggle in Settings.
 
 ## Install
 

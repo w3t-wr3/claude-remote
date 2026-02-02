@@ -821,7 +821,7 @@ static void save_settings(ClaudeRemoteState* state) {
                            state->haptics_enabled ? 1 : 0,
                            state->led_enabled ? 1 : 0,
                            state->os_mode == 1 ? "win" : state->os_mode == 2 ? "linux" : "mac");
-        storage_file_write(file, buf, len);
+        if(len > 0) storage_file_write(file, buf, len);
         storage_file_close(file);
     } else {
         storage_file_close(file);
@@ -1879,8 +1879,8 @@ static bool handle_remote_input(
                 }
             }
         } else {
-            /* Short-press Back → go Home */
-            flush_pending_single(state);
+            /* Short-press Back → go Home (discard pending key, don't send it) */
+            state->dc_pending = false;
             state->mode = ModeHome;
             if(state->led_enabled) {
                 notification_message(state->notifications, &sequence_solid_orange);
@@ -2159,7 +2159,12 @@ static bool handle_macros_input(ClaudeRemoteState* state, InputEvent* event, Vie
         break;
     case InputKeyOk:
         if(state->macro_count > 0 && state->hid_connected) {
-            send_macro_string(state, state->macros[state->macro_index]);
+            /* Release mutex during macro send so draw_callback isn't blocked */
+            char macro_buf[MACRO_MAX_LEN + 1];
+            memcpy(macro_buf, state->macros[state->macro_index], sizeof(macro_buf));
+            furi_mutex_release(state->mutex);
+            send_macro_string(state, macro_buf);
+            furi_mutex_acquire(state->mutex, FuriWaitForever);
         }
         break;
     case InputKeyBack:
