@@ -7,6 +7,7 @@
 #include <input/input.h>
 #include <notification/notification.h>
 #include <notification/notification_messages.h>
+#include <storage/storage.h>
 
 #ifdef HID_TRANSPORT_BLE
 #include <bt/bt_service/bt.h>
@@ -36,6 +37,24 @@ static const NotificationSequence sequence_solid_orange = {
     NULL,
 };
 
+/* ── LED color sequences ── */
+
+static const NotificationSequence sequence_solid_blue = {
+    &message_red_0,
+    &message_green_0,
+    &message_blue_255,
+    &message_do_not_reset,
+    NULL,
+};
+
+static const NotificationSequence sequence_solid_green = {
+    &message_red_0,
+    &message_green_255,
+    &message_blue_0,
+    &message_do_not_reset,
+    NULL,
+};
+
 /* ── Modes ── */
 
 typedef enum {
@@ -43,6 +62,8 @@ typedef enum {
     ModeHome,
     ModeRemote,
     ModeManual,
+    ModeSettings,
+    ModeMacros,
 #ifndef HID_TRANSPORT_BLE
     ModeBlePromo,
 #endif
@@ -594,6 +615,15 @@ static const ManualCategory categories[] = {
 #define CATEGORY_COUNT 7
 #define MENU_ITEM_COUNT (CATEGORY_COUNT + 1) /* +1 for Quiz */
 
+/* ── Settings & Macros constants ── */
+
+#define SETTINGS_PATH APP_DATA_PATH("settings.cfg")
+#define SETTINGS_COUNT 2
+
+#define MACRO_MAX_COUNT 10
+#define MACRO_MAX_LEN 32
+#define MACROS_PATH APP_DATA_PATH("macros.txt")
+
 /* ── Quiz cards ── */
 
 static const QuizCard quiz_cards[] = {
@@ -666,6 +696,7 @@ typedef struct {
     AppMode mode;
     bool hid_connected;
     FuriMutex* mutex;
+    NotificationApp* notifications;
 
 #ifdef HID_TRANSPORT_BLE
     bool use_ble;
@@ -704,6 +735,17 @@ typedef struct {
 
     /* splash screen */
     uint32_t splash_start;
+
+    /* settings */
+    bool haptics_enabled;
+    bool led_enabled;
+    uint8_t settings_index;
+
+    /* macros */
+    char macros[MACRO_MAX_COUNT][MACRO_MAX_LEN + 1];
+    uint8_t macro_count;
+    uint8_t macro_index;
+    bool macros_loaded;
 } ClaudeRemoteState;
 
 /* ── Utility ── */
@@ -725,6 +767,105 @@ static void quiz_shuffle(ClaudeRemoteState* state) {
         uint8_t tmp = state->quiz_order[i];
         state->quiz_order[i] = state->quiz_order[j];
         state->quiz_order[j] = tmp;
+    }
+}
+
+/* ── Settings persistence ── */
+
+static void load_settings(ClaudeRemoteState* state) {
+    state->haptics_enabled = true;
+    state->led_enabled = true;
+
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    File* file = storage_file_alloc(storage);
+
+    if(storage_file_open(file, SETTINGS_PATH, FSAM_READ, FSOM_OPEN_EXISTING)) {
+        char buf[64];
+        uint16_t bytes_read = storage_file_read(file, buf, sizeof(buf) - 1);
+        buf[bytes_read] = '\0';
+        storage_file_close(file);
+
+        char* p = buf;
+        while(*p) {
+            if(strncmp(p, "haptics=", 8) == 0) {
+                state->haptics_enabled = (p[8] == '1');
+            } else if(strncmp(p, "led=", 4) == 0) {
+                state->led_enabled = (p[4] == '1');
+            }
+            while(*p && *p != '\n') p++;
+            if(*p == '\n') p++;
+        }
+    } else {
+        storage_file_close(file);
+    }
+
+    storage_file_free(file);
+    furi_record_close(RECORD_STORAGE);
+}
+
+static void save_settings(ClaudeRemoteState* state) {
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    File* file = storage_file_alloc(storage);
+
+    if(storage_file_open(file, SETTINGS_PATH, FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
+        char buf[32];
+        int len = snprintf(buf, sizeof(buf), "haptics=%d\nled=%d\n",
+                           state->haptics_enabled ? 1 : 0,
+                           state->led_enabled ? 1 : 0);
+        storage_file_write(file, buf, len);
+        storage_file_close(file);
+    } else {
+        storage_file_close(file);
+    }
+
+    storage_file_free(file);
+    furi_record_close(RECORD_STORAGE);
+}
+
+/* ── Macro helpers ── */
+
+static uint16_t char_to_hid(char c) {
+    if(c >= 'a' && c <= 'z') return HID_KEYBOARD_A + (c - 'a');
+    if(c >= 'A' && c <= 'Z') return (HID_KEYBOARD_A + (c - 'A')) | KEY_MOD_LEFT_SHIFT;
+    if(c >= '1' && c <= '9') return HID_KEYBOARD_1 + (c - '1');
+    if(c == '0') return HID_KEYBOARD_0;
+    switch(c) {
+    case ' ':  return HID_KEYBOARD_SPACEBAR;
+    case '\t': return HID_KEYBOARD_TAB;
+    case '-':  return HID_KEYBOARD_MINUS;
+    case '=':  return HID_KEYBOARD_EQUAL_SIGN;
+    case '[':  return HID_KEYBOARD_OPEN_BRACKET;
+    case ']':  return HID_KEYBOARD_CLOSE_BRACKET;
+    case '\\': return HID_KEYBOARD_BACKSLASH;
+    case ';':  return HID_KEYBOARD_SEMICOLON;
+    case '\'': return HID_KEYBOARD_APOSTROPHE;
+    case '`':  return HID_KEYBOARD_GRAVE_ACCENT;
+    case ',':  return HID_KEYBOARD_COMMA;
+    case '.':  return HID_KEYBOARD_DOT;
+    case '/':  return HID_KEYBOARD_SLASH;
+    /* shifted symbols */
+    case '!':  return HID_KEYBOARD_1 | KEY_MOD_LEFT_SHIFT;
+    case '@':  return HID_KEYBOARD_2 | KEY_MOD_LEFT_SHIFT;
+    case '#':  return HID_KEYBOARD_3 | KEY_MOD_LEFT_SHIFT;
+    case '$':  return HID_KEYBOARD_4 | KEY_MOD_LEFT_SHIFT;
+    case '%':  return HID_KEYBOARD_5 | KEY_MOD_LEFT_SHIFT;
+    case '^':  return HID_KEYBOARD_6 | KEY_MOD_LEFT_SHIFT;
+    case '&':  return HID_KEYBOARD_7 | KEY_MOD_LEFT_SHIFT;
+    case '*':  return HID_KEYBOARD_8 | KEY_MOD_LEFT_SHIFT;
+    case '(':  return HID_KEYBOARD_9 | KEY_MOD_LEFT_SHIFT;
+    case ')':  return HID_KEYBOARD_0 | KEY_MOD_LEFT_SHIFT;
+    case '_':  return HID_KEYBOARD_MINUS | KEY_MOD_LEFT_SHIFT;
+    case '+':  return HID_KEYBOARD_EQUAL_SIGN | KEY_MOD_LEFT_SHIFT;
+    case '{':  return HID_KEYBOARD_OPEN_BRACKET | KEY_MOD_LEFT_SHIFT;
+    case '}':  return HID_KEYBOARD_CLOSE_BRACKET | KEY_MOD_LEFT_SHIFT;
+    case '|':  return HID_KEYBOARD_BACKSLASH | KEY_MOD_LEFT_SHIFT;
+    case ':':  return HID_KEYBOARD_SEMICOLON | KEY_MOD_LEFT_SHIFT;
+    case '"':  return HID_KEYBOARD_APOSTROPHE | KEY_MOD_LEFT_SHIFT;
+    case '~':  return HID_KEYBOARD_GRAVE_ACCENT | KEY_MOD_LEFT_SHIFT;
+    case '<':  return HID_KEYBOARD_COMMA | KEY_MOD_LEFT_SHIFT;
+    case '>':  return HID_KEYBOARD_DOT | KEY_MOD_LEFT_SHIFT;
+    case '?':  return HID_KEYBOARD_SLASH | KEY_MOD_LEFT_SHIFT;
+    default:   return 0;
     }
 }
 
@@ -809,12 +950,62 @@ static const uint8_t wetware_logo[] = {
     else send_consumer_key_usb((k)); \
 } while(0)
 #else
-#define SEND_HID(state, k) send_hid_key_usb((k))
-#define SEND_CONSUMER(state, k) send_consumer_key_usb((k))
+#define SEND_HID(state, k) do { (void)(state); send_hid_key_usb((k)); } while(0)
+#define SEND_CONSUMER(state, k) do { (void)(state); send_consumer_key_usb((k)); } while(0)
 #endif
 
 #define DC_TIMEOUT_TICKS 300 /* ~300ms at 1kHz tick */
 #define FLASH_DURATION_TICKS 200 /* ~200ms visual feedback */
+
+/* ── Macro string sender (needs SEND_HID macro) ── */
+
+static void send_macro_string(ClaudeRemoteState* state, const char* str) {
+    for(const char* p = str; *p; p++) {
+        uint16_t key = char_to_hid(*p);
+        if(key != 0) {
+            SEND_HID(state, key);
+            furi_delay_ms(20);
+        }
+    }
+    SEND_HID(state, HID_KEYBOARD_RETURN);
+}
+
+/* ── Macro loader from SD ── */
+
+static void load_macros_from_sd(ClaudeRemoteState* state) {
+    state->macro_count = 0;
+    state->macros_loaded = true;
+
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    File* file = storage_file_alloc(storage);
+
+    if(storage_file_open(file, MACROS_PATH, FSAM_READ, FSOM_OPEN_EXISTING)) {
+        char buf[512];
+        uint16_t bytes_read = storage_file_read(file, buf, sizeof(buf) - 1);
+        buf[bytes_read] = '\0';
+
+        char* p = buf;
+        while(*p && state->macro_count < MACRO_MAX_COUNT) {
+            char* line_start = p;
+            while(*p && *p != '\n' && *p != '\r') p++;
+
+            int len = p - line_start;
+            if(len > MACRO_MAX_LEN) len = MACRO_MAX_LEN;
+
+            if(len > 0) {
+                memcpy(state->macros[state->macro_count], line_start, len);
+                state->macros[state->macro_count][len] = '\0';
+                state->macro_count++;
+            }
+
+            while(*p == '\n' || *p == '\r') p++;
+        }
+    }
+
+    storage_file_close(file);
+    storage_file_free(file);
+    furi_record_close(RECORD_STORAGE);
+}
 
 static void flush_pending_single(ClaudeRemoteState* state) {
     if(!state->dc_pending) return;
@@ -854,6 +1045,9 @@ static void flush_pending_single(ClaudeRemoteState* state) {
     if(label) {
         state->flash_label = label;
         state->flash_tick = furi_get_tick();
+        if(state->haptics_enabled) {
+            notification_message(state->notifications, &sequence_single_vibro);
+        }
     }
 }
 
@@ -896,6 +1090,9 @@ static void send_double_action(ClaudeRemoteState* state, InputKey key) {
     if(label) {
         state->flash_label = label;
         state->flash_tick = furi_get_tick();
+        if(state->haptics_enabled) {
+            notification_message(state->notifications, &sequence_double_vibro);
+        }
     }
 }
 
@@ -908,7 +1105,7 @@ static void draw_splash(Canvas* canvas) {
     canvas_clear(canvas);
 
     canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str_aligned(canvas, 64, 6, AlignCenter, AlignCenter, "Claupper Remote");
+    canvas_draw_str_aligned(canvas, 64, 6, AlignCenter, AlignCenter, "Claupper");
 
     /* WETWARE logo bitmap — full 128px width */
     canvas_draw_xbm(canvas, 0, 14, WETWARE_LOGO_W, WETWARE_LOGO_H, wetware_logo);
@@ -929,58 +1126,63 @@ static void draw_home(Canvas* canvas) {
     canvas_draw_rframe(canvas, 0, 0, 64, 128, 3);
 
     canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str_aligned(canvas, 32, 12, AlignCenter, AlignCenter, "Claude");
-    canvas_draw_str_aligned(canvas, 32, 26, AlignCenter, AlignCenter, "Remote");
-    canvas_draw_line(canvas, 10, 34, 54, 34);
+    canvas_draw_str_aligned(canvas, 32, 12, AlignCenter, AlignCenter, "Claupper");
+    canvas_draw_line(canvas, 10, 20, 54, 20);
 
     /* Mini D-pad illustration */
-    canvas_draw_frame(canvas, 26, 42, 12, 13);
-    canvas_draw_frame(canvas, 14, 54, 13, 12);
-    canvas_draw_box(canvas, 26, 54, 12, 12);
-    canvas_draw_frame(canvas, 37, 54, 13, 12);
-    canvas_draw_frame(canvas, 26, 65, 12, 13);
+    canvas_draw_frame(canvas, 26, 28, 12, 13);
+    canvas_draw_frame(canvas, 14, 40, 13, 12);
+    canvas_draw_box(canvas, 26, 40, 12, 12);
+    canvas_draw_frame(canvas, 37, 40, 13, 12);
+    canvas_draw_frame(canvas, 26, 51, 12, 13);
 
-    canvas_draw_line(canvas, 32, 45, 29, 49);
-    canvas_draw_line(canvas, 32, 45, 35, 49);
-    canvas_draw_line(canvas, 18, 60, 22, 57);
-    canvas_draw_line(canvas, 18, 60, 22, 63);
-    canvas_draw_line(canvas, 46, 60, 42, 57);
-    canvas_draw_line(canvas, 46, 60, 42, 63);
-    canvas_draw_line(canvas, 32, 75, 29, 71);
-    canvas_draw_line(canvas, 32, 75, 35, 71);
+    canvas_draw_line(canvas, 32, 31, 29, 35);
+    canvas_draw_line(canvas, 32, 31, 35, 35);
+    canvas_draw_line(canvas, 18, 46, 22, 43);
+    canvas_draw_line(canvas, 18, 46, 22, 49);
+    canvas_draw_line(canvas, 46, 46, 42, 43);
+    canvas_draw_line(canvas, 46, 46, 42, 49);
+    canvas_draw_line(canvas, 32, 61, 29, 57);
+    canvas_draw_line(canvas, 32, 61, 35, 57);
 
     canvas_set_color(canvas, ColorWhite);
-    canvas_draw_disc(canvas, 32, 60, 3);
+    canvas_draw_disc(canvas, 32, 46, 3);
     canvas_set_color(canvas, ColorBlack);
 
     canvas_set_font(canvas, FontSecondary);
 
-    /* OK button (filled) → Remote */
-    canvas_draw_box(canvas, 6, 86, 14, 10);
+    /* 5 rows, 10px each, y=74..123 — fits inside rframe */
+
+    /* Up arrow → Macros */
+    canvas_draw_frame(canvas, 4, 74, 14, 10);
+    canvas_draw_line(canvas, 11, 76, 8, 80);
+    canvas_draw_line(canvas, 11, 76, 14, 80);
+    canvas_draw_str(canvas, 21, 82, "Macros");
+
+    /* OK button (filled) → USB */
+    canvas_draw_box(canvas, 4, 84, 14, 10);
     canvas_set_color(canvas, ColorWhite);
-    canvas_draw_str_aligned(canvas, 13, 91, AlignCenter, AlignCenter, "OK");
+    canvas_draw_str_aligned(canvas, 11, 89, AlignCenter, AlignCenter, "OK");
     canvas_set_color(canvas, ColorBlack);
-#ifdef HID_TRANSPORT_BLE
-    canvas_draw_str(canvas, 24, 94, "USB Remote");
-#else
-    canvas_draw_str(canvas, 24, 94, "Remote");
-#endif
+    canvas_draw_str(canvas, 21, 92, "USB");
+
+    /* Left arrow → Settings */
+    canvas_draw_frame(canvas, 4, 94, 14, 10);
+    canvas_draw_line(canvas, 8, 99, 11, 96);
+    canvas_draw_line(canvas, 8, 99, 11, 102);
+    canvas_draw_str(canvas, 21, 102, "Settings");
 
     /* Down arrow → Manual */
-    canvas_draw_frame(canvas, 6, 100, 14, 10);
-    canvas_draw_line(canvas, 13, 107, 10, 103);
-    canvas_draw_line(canvas, 13, 107, 16, 103);
-    canvas_draw_str(canvas, 24, 108, "Manual");
+    canvas_draw_frame(canvas, 4, 104, 14, 10);
+    canvas_draw_line(canvas, 11, 111, 8, 107);
+    canvas_draw_line(canvas, 11, 111, 14, 107);
+    canvas_draw_str(canvas, 21, 112, "Manual");
 
-    /* Right arrow → BT */
-    canvas_draw_frame(canvas, 6, 114, 14, 10);
-    canvas_draw_line(canvas, 16, 119, 13, 116);
-    canvas_draw_line(canvas, 16, 119, 13, 122);
-#ifdef HID_TRANSPORT_BLE
-    canvas_draw_str(canvas, 24, 122, "BT Remote");
-#else
-    canvas_draw_str(canvas, 24, 122, "Go BT");
-#endif
+    /* Right arrow → Bluetooth */
+    canvas_draw_frame(canvas, 4, 114, 14, 10);
+    canvas_draw_line(canvas, 14, 119, 11, 116);
+    canvas_draw_line(canvas, 14, 119, 11, 122);
+    canvas_draw_str(canvas, 21, 122, "Bluetooth");
 
 }
 
@@ -1027,12 +1229,12 @@ static void draw_remote(Canvas* canvas, ClaudeRemoteState* state) {
     }
 
     canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str_aligned(canvas, 32, 10, AlignCenter, AlignCenter, "Claude");
+    canvas_draw_str_aligned(canvas, 32, 10, AlignCenter, AlignCenter, "Claupper");
 #ifdef HID_TRANSPORT_BLE
     canvas_draw_str_aligned(canvas, 32, 22, AlignCenter, AlignCenter,
-        state->use_ble ? "BT Remote" : "USB Remote");
+        state->use_ble ? "BT" : "USB");
 #else
-    canvas_draw_str_aligned(canvas, 32, 22, AlignCenter, AlignCenter, "Remote");
+    canvas_draw_str_aligned(canvas, 32, 22, AlignCenter, AlignCenter, "USB");
 #endif
     canvas_draw_line(canvas, 4, 30, 60, 30);
 
@@ -1097,7 +1299,7 @@ static void draw_manual_categories(Canvas* canvas, ClaudeRemoteState* state) {
     canvas_clear(canvas);
 
     canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str(canvas, 2, 10, "Claude Manual");
+    canvas_draw_str(canvas, 2, 10, "Claupper Manual");
     canvas_draw_line(canvas, 0, 13, 128, 13);
 
     canvas_set_font(canvas, FontSecondary);
@@ -1428,6 +1630,90 @@ static void draw_manual_quiz(Canvas* canvas, ClaudeRemoteState* state) {
     draw_quiz_multichoice(canvas, state, card);
 }
 
+/* ── Settings screen (landscape 128x64) ── */
+
+static void draw_settings(Canvas* canvas, ClaudeRemoteState* state) {
+    canvas_clear(canvas);
+
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str(canvas, 2, 10, "Settings");
+    canvas_draw_line(canvas, 0, 13, 128, 13);
+
+    canvas_set_font(canvas, FontSecondary);
+
+    const char* labels[SETTINGS_COUNT] = {"Haptics", "LED"};
+    bool values[SETTINGS_COUNT] = {state->haptics_enabled, state->led_enabled};
+
+    for(int i = 0; i < SETTINGS_COUNT; i++) {
+        int y = 26 + i * 14;
+        bool selected = (i == state->settings_index);
+
+        if(selected) {
+            canvas_draw_str(canvas, 4, y, ">");
+        }
+
+        canvas_draw_str(canvas, 14, y, labels[i]);
+
+        const char* val_str = values[i] ? "[ON]" : "[OFF]";
+        canvas_draw_str_aligned(canvas, 110, y, AlignRight, AlignBottom, val_str);
+    }
+
+    canvas_draw_line(canvas, 0, 54, 128, 54);
+    canvas_draw_str_aligned(canvas, 64, 62, AlignCenter, AlignBottom, "OK:Toggle  Bk:Save");
+}
+
+/* ── Macros screen (landscape 128x64) ── */
+
+static void draw_macros(Canvas* canvas, ClaudeRemoteState* state) {
+    canvas_clear(canvas);
+
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str(canvas, 2, 10, "Macros");
+    canvas_draw_line(canvas, 0, 13, 128, 13);
+
+    canvas_set_font(canvas, FontSecondary);
+
+    if(state->macro_count == 0) {
+        canvas_draw_str_aligned(canvas, 64, 30, AlignCenter, AlignCenter, "No macros found");
+        canvas_draw_str_aligned(canvas, 64, 42, AlignCenter, AlignCenter, "Add lines to:");
+        canvas_draw_str(canvas, 4, 52, MACROS_PATH);
+    } else {
+        uint8_t first_visible = 0;
+        if(state->macro_index > 2) first_visible = state->macro_index - 2;
+
+        for(int i = 0; i < 3; i++) {
+            uint8_t idx = first_visible + i;
+            if(idx >= state->macro_count) break;
+
+            int y = 24 + i * 12;
+            bool selected = (idx == state->macro_index);
+
+            if(selected) {
+                canvas_draw_box(canvas, 0, y - 9, 128, 12);
+                canvas_set_color(canvas, ColorWhite);
+            }
+
+            char display[30];
+            snprintf(display, sizeof(display), "%d. %s", idx + 1, state->macros[idx]);
+            canvas_draw_str(canvas, 4, y, display);
+
+            if(selected) {
+                canvas_set_color(canvas, ColorBlack);
+            }
+        }
+
+        if(first_visible > 0) {
+            canvas_draw_str_aligned(canvas, 124, 17, AlignRight, AlignTop, "^");
+        }
+        if(first_visible + 3 < state->macro_count) {
+            canvas_draw_str_aligned(canvas, 124, 50, AlignRight, AlignBottom, "v");
+        }
+    }
+
+    canvas_draw_line(canvas, 0, 54, 128, 54);
+    canvas_draw_str_aligned(canvas, 64, 62, AlignCenter, AlignBottom, "OK:Send  Bk:Home");
+}
+
 /* ── Draw dispatcher ── */
 
 static void draw_callback(Canvas* canvas, void* ctx) {
@@ -1460,6 +1746,12 @@ static void draw_callback(Canvas* canvas, void* ctx) {
             break;
         }
         break;
+    case ModeSettings:
+        draw_settings(canvas, state);
+        break;
+    case ModeMacros:
+        draw_macros(canvas, state);
+        break;
 #ifndef HID_TRANSPORT_BLE
     case ModeBlePromo:
         draw_ble_promo(canvas);
@@ -1491,24 +1783,51 @@ static bool handle_home_input(ClaudeRemoteState* state, InputEvent* event, ViewP
         state->hid_connected = furi_hal_hid_is_connected();
 #endif
         state->mode = ModeRemote;
+        if(state->led_enabled) {
+            notification_message(state->notifications, &sequence_solid_blue);
+        }
         break;
     case InputKeyRight:
 #ifdef HID_TRANSPORT_BLE
         state->use_ble = true;
         state->hid_connected = state->ble_connected;
         state->mode = ModeRemote;
+        if(state->led_enabled) {
+            notification_message(state->notifications, &sequence_solid_blue);
+        }
 #else
         state->mode = ModeBlePromo;
         view_port_set_orientation(vp, ViewPortOrientationHorizontal);
 #endif
         break;
     case InputKeyDown:
-    case InputKeyLeft:
         state->cat_index = 0;
         state->section_index = 0;
         state->scroll_offset = 0;
         state->manual_view = ManualViewCategories;
         state->mode = ModeManual;
+        if(state->led_enabled) {
+            notification_message(state->notifications, &sequence_solid_green);
+        }
+        view_port_set_orientation(vp, ViewPortOrientationHorizontal);
+        break;
+    case InputKeyLeft:
+        state->settings_index = 0;
+        state->mode = ModeSettings;
+        if(state->led_enabled) {
+            notification_message(state->notifications, &sequence_solid_orange);
+        }
+        view_port_set_orientation(vp, ViewPortOrientationHorizontal);
+        break;
+    case InputKeyUp:
+        if(!state->macros_loaded) {
+            load_macros_from_sd(state);
+        }
+        state->macro_index = 0;
+        state->mode = ModeMacros;
+        if(state->led_enabled) {
+            notification_message(state->notifications, &sequence_solid_orange);
+        }
         view_port_set_orientation(vp, ViewPortOrientationHorizontal);
         break;
     case InputKeyBack:
@@ -1523,14 +1842,33 @@ static bool handle_remote_input(
     ClaudeRemoteState* state,
     InputEvent* event,
     ViewPort* view_port) {
-    if(event->type != InputTypeShort) return true;
+    if(event->type != InputTypeShort && event->type != InputTypeLong) return true;
 
     if(event->key == InputKeyBack) {
-        flush_pending_single(state);
-        state->mode = ModeHome;
-        view_port_set_orientation(view_port, ViewPortOrientationVertical);
+        if(event->type == InputTypeLong) {
+            /* Long-press Back → send Escape */
+            if(state->hid_connected) {
+                SEND_HID(state, HID_KEYBOARD_ESCAPE);
+                state->flash_label = "Esc";
+                state->flash_tick = furi_get_tick();
+                if(state->haptics_enabled) {
+                    notification_message(state->notifications, &sequence_single_vibro);
+                }
+            }
+        } else {
+            /* Short-press Back → go Home */
+            flush_pending_single(state);
+            state->mode = ModeHome;
+            if(state->led_enabled) {
+                notification_message(state->notifications, &sequence_solid_orange);
+            }
+            view_port_set_orientation(view_port, ViewPortOrientationVertical);
+        }
         return true;
     }
+
+    /* Only process short presses for d-pad keys (long-press would trigger double-click) */
+    if(event->type != InputTypeShort) return true;
 
 #ifdef HID_TRANSPORT_BLE
     if(!state->use_ble) {
@@ -1583,6 +1921,9 @@ static void handle_manual_categories(ClaudeRemoteState* state, InputEvent* event
         break;
     case InputKeyBack:
         state->mode = ModeHome;
+        if(state->led_enabled) {
+            notification_message(state->notifications, &sequence_solid_orange);
+        }
         view_port_set_orientation(vp, ViewPortOrientationVertical);
         break;
     default:
@@ -1745,13 +2086,77 @@ static bool handle_manual_input(ClaudeRemoteState* state, InputEvent* event, Vie
     return true;
 }
 
+/* ── Settings input handler ── */
+
+static bool handle_settings_input(ClaudeRemoteState* state, InputEvent* event, ViewPort* vp) {
+    if(event->type != InputTypeShort) return true;
+
+    switch(event->key) {
+    case InputKeyUp:
+        if(state->settings_index > 0) state->settings_index--;
+        break;
+    case InputKeyDown:
+        if(state->settings_index < SETTINGS_COUNT - 1) state->settings_index++;
+        break;
+    case InputKeyOk:
+        if(state->settings_index == 0) {
+            state->haptics_enabled = !state->haptics_enabled;
+        } else if(state->settings_index == 1) {
+            state->led_enabled = !state->led_enabled;
+        }
+        break;
+    case InputKeyBack:
+        save_settings(state);
+        state->mode = ModeHome;
+        if(state->led_enabled) {
+            notification_message(state->notifications, &sequence_solid_orange);
+        }
+        view_port_set_orientation(vp, ViewPortOrientationVertical);
+        break;
+    default:
+        break;
+    }
+    return true;
+}
+
+/* ── Macros input handler ── */
+
+static bool handle_macros_input(ClaudeRemoteState* state, InputEvent* event, ViewPort* vp) {
+    if(event->type != InputTypeShort) return true;
+
+    switch(event->key) {
+    case InputKeyUp:
+        if(state->macro_index > 0) state->macro_index--;
+        break;
+    case InputKeyDown:
+        if(state->macro_count > 0 && state->macro_index < state->macro_count - 1)
+            state->macro_index++;
+        break;
+    case InputKeyOk:
+        if(state->macro_count > 0 && state->hid_connected) {
+            send_macro_string(state, state->macros[state->macro_index]);
+        }
+        break;
+    case InputKeyBack:
+        state->mode = ModeHome;
+        if(state->led_enabled) {
+            notification_message(state->notifications, &sequence_solid_orange);
+        }
+        view_port_set_orientation(vp, ViewPortOrientationVertical);
+        break;
+    default:
+        break;
+    }
+    return true;
+}
+
 /* ══════════════════════════════════════════════
  *  Main app logic
  * ══════════════════════════════════════════════ */
 
 static int32_t claude_remote_main(void* p) {
     UNUSED(p);
-    FURI_LOG_I(TAG, "Starting Claude Remote");
+    FURI_LOG_I(TAG, "Starting Claupper");
 
     ClaudeRemoteState* state = malloc(sizeof(ClaudeRemoteState));
     memset(state, 0, sizeof(ClaudeRemoteState));
@@ -1759,8 +2164,11 @@ static int32_t claude_remote_main(void* p) {
     state->splash_start = furi_get_tick();
     state->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
 
-    NotificationApp* notifications = furi_record_open(RECORD_NOTIFICATION);
-    notification_message(notifications, &sequence_solid_orange);
+    state->notifications = furi_record_open(RECORD_NOTIFICATION);
+    load_settings(state);
+    if(state->led_enabled) {
+        notification_message(state->notifications, &sequence_solid_orange);
+    }
 
     FuriMessageQueue* queue = furi_message_queue_alloc(8, sizeof(InputEvent));
 
@@ -1821,10 +2229,19 @@ static int32_t claude_remote_main(void* p) {
             case ModeManual:
                 running = handle_manual_input(state, &event, view_port);
                 break;
+            case ModeSettings:
+                running = handle_settings_input(state, &event, view_port);
+                break;
+            case ModeMacros:
+                running = handle_macros_input(state, &event, view_port);
+                break;
 #ifndef HID_TRANSPORT_BLE
             case ModeBlePromo:
                 if(event.type == InputTypeShort && event.key == InputKeyBack) {
                     state->mode = ModeHome;
+                    if(state->led_enabled) {
+                        notification_message(state->notifications, &sequence_solid_orange);
+                    }
                     view_port_set_orientation(view_port, ViewPortOrientationVertical);
                 }
                 break;
@@ -1832,7 +2249,7 @@ static int32_t claude_remote_main(void* p) {
             }
         }
 
-        if(state->mode == ModeRemote) {
+        if(state->mode == ModeRemote || state->mode == ModeMacros) {
 #ifdef HID_TRANSPORT_BLE
             if(state->use_ble) {
                 state->hid_connected = state->ble_connected;
@@ -1842,8 +2259,8 @@ static int32_t claude_remote_main(void* p) {
 #else
             state->hid_connected = furi_hal_hid_is_connected();
 #endif
-            /* flush pending single-press after double-click timeout */
-            if(state->dc_pending &&
+            /* flush pending single-press after double-click timeout (remote only) */
+            if(state->mode == ModeRemote && state->dc_pending &&
                (furi_get_tick() - state->dc_tick) >= DC_TIMEOUT_TICKS) {
                 flush_pending_single(state);
             }
@@ -1853,9 +2270,9 @@ static int32_t claude_remote_main(void* p) {
         view_port_update(view_port);
     }
 
-    FURI_LOG_I(TAG, "Exiting Claude Remote");
+    FURI_LOG_I(TAG, "Exiting Claupper");
 
-    notification_message(notifications, &sequence_reset_rgb);
+    notification_message(state->notifications, &sequence_reset_rgb);
     furi_record_close(RECORD_NOTIFICATION);
 
     /* Cleanup USB HID (both builds) */
