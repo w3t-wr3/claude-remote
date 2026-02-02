@@ -618,7 +618,7 @@ static const ManualCategory categories[] = {
 /* ── Settings & Macros constants ── */
 
 #define SETTINGS_PATH APP_DATA_PATH("settings.cfg")
-#define SETTINGS_COUNT 2
+#define SETTINGS_COUNT 3
 
 #define MACRO_MAX_COUNT 10
 #define MACRO_MAX_LEN 32
@@ -739,6 +739,7 @@ typedef struct {
     /* settings */
     bool haptics_enabled;
     bool led_enabled;
+    bool os_windows;
     uint8_t settings_index;
 
     /* macros */
@@ -775,6 +776,7 @@ static void quiz_shuffle(ClaudeRemoteState* state) {
 static void load_settings(ClaudeRemoteState* state) {
     state->haptics_enabled = true;
     state->led_enabled = true;
+    state->os_windows = false;
 
     Storage* storage = furi_record_open(RECORD_STORAGE);
     File* file = storage_file_alloc(storage);
@@ -791,6 +793,8 @@ static void load_settings(ClaudeRemoteState* state) {
                 state->haptics_enabled = (p[8] == '1');
             } else if(strncmp(p, "led=", 4) == 0) {
                 state->led_enabled = (p[4] == '1');
+            } else if(strncmp(p, "os=", 3) == 0) {
+                state->os_windows = (p[3] == 'w');
             }
             while(*p && *p != '\n') p++;
             if(*p == '\n') p++;
@@ -808,10 +812,11 @@ static void save_settings(ClaudeRemoteState* state) {
     File* file = storage_file_alloc(storage);
 
     if(storage_file_open(file, SETTINGS_PATH, FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
-        char buf[32];
-        int len = snprintf(buf, sizeof(buf), "haptics=%d\nled=%d\n",
+        char buf[48];
+        int len = snprintf(buf, sizeof(buf), "haptics=%d\nled=%d\nos=%s\n",
                            state->haptics_enabled ? 1 : 0,
-                           state->led_enabled ? 1 : 0);
+                           state->led_enabled ? 1 : 0,
+                           state->os_windows ? "win" : "mac");
         storage_file_write(file, buf, len);
         storage_file_close(file);
     } else {
@@ -1035,9 +1040,15 @@ static void flush_pending_single(ClaudeRemoteState* state) {
         FURI_LOG_I(TAG, "Sent: Enter");
         break;
     case InputKeyDown:
-        SEND_CONSUMER(state, HID_CONSUMER_DICTATION);
-        label = "Dictate";
-        FURI_LOG_I(TAG, "Sent: Dictation (consumer 0x00CF)");
+        if(state->os_windows) {
+            SEND_HID(state, HID_KEYBOARD_H | KEY_MOD_LEFT_GUI);
+            label = "Voice";
+            FURI_LOG_I(TAG, "Sent: Win+H (Windows Voice Typing)");
+        } else {
+            SEND_CONSUMER(state, HID_CONSUMER_DICTATION);
+            label = "Dictate";
+            FURI_LOG_I(TAG, "Sent: Dictation (consumer 0x00CF)");
+        }
         break;
     default:
         break;
@@ -1075,9 +1086,15 @@ static void send_double_action(ClaudeRemoteState* state, InputKey key) {
         FURI_LOG_I(TAG, "Double: Up Arrow (prev command)");
         break;
     case InputKeyOk:
-        SEND_HID(state, HID_KEYBOARD_GRAVE_ACCENT | KEY_MOD_LEFT_GUI);
-        label = "Switch";
-        FURI_LOG_I(TAG, "Double: Cmd+` (switch window)");
+        if(state->os_windows) {
+            SEND_HID(state, HID_KEYBOARD_TAB | KEY_MOD_LEFT_ALT);
+            label = "Switch";
+            FURI_LOG_I(TAG, "Double: Alt+Tab (switch window)");
+        } else {
+            SEND_HID(state, HID_KEYBOARD_GRAVE_ACCENT | KEY_MOD_LEFT_GUI);
+            label = "Switch";
+            FURI_LOG_I(TAG, "Double: Cmd+` (switch window)");
+        }
         break;
     case InputKeyDown:
         SEND_HID(state, HID_KEYBOARD_PAGE_DOWN);
@@ -1641,11 +1658,10 @@ static void draw_settings(Canvas* canvas, ClaudeRemoteState* state) {
 
     canvas_set_font(canvas, FontSecondary);
 
-    const char* labels[SETTINGS_COUNT] = {"Haptics", "LED"};
-    bool values[SETTINGS_COUNT] = {state->haptics_enabled, state->led_enabled};
+    const char* labels[SETTINGS_COUNT] = {"Haptics", "LED", "OS"};
 
     for(int i = 0; i < SETTINGS_COUNT; i++) {
-        int y = 26 + i * 14;
+        int y = 26 + i * 13;
         bool selected = (i == state->settings_index);
 
         if(selected) {
@@ -1654,7 +1670,10 @@ static void draw_settings(Canvas* canvas, ClaudeRemoteState* state) {
 
         canvas_draw_str(canvas, 14, y, labels[i]);
 
-        const char* val_str = values[i] ? "[ON]" : "[OFF]";
+        const char* val_str;
+        if(i == 0) val_str = state->haptics_enabled ? "[ON]" : "[OFF]";
+        else if(i == 1) val_str = state->led_enabled ? "[ON]" : "[OFF]";
+        else val_str = state->os_windows ? "[Win]" : "[Mac]";
         canvas_draw_str_aligned(canvas, 110, y, AlignRight, AlignBottom, val_str);
     }
 
@@ -2103,6 +2122,8 @@ static bool handle_settings_input(ClaudeRemoteState* state, InputEvent* event, V
             state->haptics_enabled = !state->haptics_enabled;
         } else if(state->settings_index == 1) {
             state->led_enabled = !state->led_enabled;
+        } else if(state->settings_index == 2) {
+            state->os_windows = !state->os_windows;
         }
         break;
     case InputKeyBack:
