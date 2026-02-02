@@ -693,6 +693,8 @@ typedef struct {
     uint8_t quiz_order[24]; /* QUIZ_CARD_COUNT — shuffled indices */
     int8_t  quiz_selected;  /* multi-choice: -1=none, 0/1/2 */
     bool    quiz_answered;  /* multi-choice: showing feedback */
+    bool    quiz_selecting; /* showing difficulty picker */
+    uint8_t quiz_count;     /* questions this round (8/16/24) */
 
     /* double-click detection (remote mode) */
     InputKey dc_key;
@@ -1296,32 +1298,37 @@ static void draw_quiz_multichoice(Canvas* canvas, ClaudeRemoteState* state, cons
 
     if(state->quiz_answered) {
         bool was_correct = (state->quiz_selected == card->correct_option);
-
-        /* Modal title bar — frame only (transparent) */
-        canvas_draw_rframe(canvas, 8, 18, 112, 14, 3);
-
-        /* Result pill inside title bar */
         const char* result_str = was_correct ? "CORRECT!" : "WRONG!";
-        int pill_w = strlen(result_str) * 7 + 10;
-        int pill_x = 64 - pill_w / 2;
-        canvas_draw_rbox(canvas, pill_x, 20, pill_w, 10, 2);
-        canvas_set_color(canvas, ColorWhite);
-        canvas_set_font(canvas, FontPrimary);
-        canvas_draw_str_aligned(canvas, 64, 25, AlignCenter, AlignCenter, result_str);
-        canvas_set_color(canvas, ColorBlack);
 
-        /* Modal body — white fill + frame */
+        /* Window frame */
         canvas_set_color(canvas, ColorWhite);
-        canvas_draw_rbox(canvas, 9, 32, 110, 28, 3);
+        canvas_draw_rbox(canvas, 9, 19, 110, 40, 2);
         canvas_set_color(canvas, ColorBlack);
-        canvas_draw_rframe(canvas, 8, 31, 112, 29, 3);
+        canvas_draw_rframe(canvas, 8, 18, 112, 42, 2);
+
+        /* Title bar stripes (classic Mac) */
+        for(int sy = 21; sy <= 25; sy += 2) {
+            canvas_draw_line(canvas, 10, sy, 118, sy);
+        }
+
+        /* Clear center of title bar for text */
+        int title_w = strlen(result_str) * 7 + 6;
+        int title_x = 64 - title_w / 2;
+        canvas_set_color(canvas, ColorWhite);
+        canvas_draw_box(canvas, title_x, 20, title_w, 8);
+        canvas_set_color(canvas, ColorBlack);
+        canvas_set_font(canvas, FontPrimary);
+        canvas_draw_str_aligned(canvas, 64, 24, AlignCenter, AlignCenter, result_str);
+
+        /* Title bar divider */
+        canvas_draw_line(canvas, 8, 28, 120, 28);
 
         /* Answer text */
         canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str_aligned(canvas, 64, 43, AlignCenter, AlignCenter, card->command);
+        canvas_draw_str_aligned(canvas, 64, 40, AlignCenter, AlignCenter, card->command);
 
         /* Footer */
-        canvas_draw_str_aligned(canvas, 64, 55, AlignCenter, AlignCenter, "OK:Next");
+        canvas_draw_str_aligned(canvas, 64, 53, AlignCenter, AlignCenter, "OK:Next");
     } else {
         const char* opts[3] = {card->option_a, card->option_b, card->option_c};
         const char* labels[3] = {"<", "^", ">"};
@@ -1350,8 +1357,43 @@ static void draw_quiz_multichoice(Canvas* canvas, ClaudeRemoteState* state, cons
 static void draw_manual_quiz(Canvas* canvas, ClaudeRemoteState* state) {
     canvas_clear(canvas);
 
+    /* difficulty picker */
+    if(state->quiz_selecting) {
+        canvas_set_font(canvas, FontPrimary);
+        canvas_draw_str_aligned(canvas, 64, 10, AlignCenter, AlignCenter, "Quiz Mode");
+        canvas_draw_line(canvas, 0, 18, 128, 18);
+
+        /* Mac-style modal */
+        canvas_set_color(canvas, ColorWhite);
+        canvas_draw_rbox(canvas, 5, 21, 118, 42, 2);
+        canvas_set_color(canvas, ColorBlack);
+        canvas_draw_rframe(canvas, 4, 20, 120, 44, 2);
+
+        /* Title bar stripes */
+        for(int sy = 23; sy <= 27; sy += 2) {
+            canvas_draw_line(canvas, 6, sy, 122, sy);
+        }
+
+        /* Clear center for title */
+        canvas_set_color(canvas, ColorWhite);
+        canvas_draw_box(canvas, 34, 22, 60, 8);
+        canvas_set_color(canvas, ColorBlack);
+        canvas_set_font(canvas, FontPrimary);
+        canvas_draw_str_aligned(canvas, 64, 26, AlignCenter, AlignCenter, "Difficulty");
+
+        /* Divider */
+        canvas_draw_line(canvas, 4, 30, 124, 30);
+
+        /* Options */
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str_aligned(canvas, 64, 38, AlignCenter, AlignCenter, "<  Easy (8)");
+        canvas_draw_str_aligned(canvas, 64, 47, AlignCenter, AlignCenter, "^  Medium (16)");
+        canvas_draw_str_aligned(canvas, 64, 56, AlignCenter, AlignCenter, ">  Hard (24)");
+        return;
+    }
+
     /* completion screen */
-    if(state->quiz_index >= QUIZ_CARD_COUNT) {
+    if(state->quiz_index >= state->quiz_count) {
         canvas_set_font(canvas, FontPrimary);
         canvas_draw_str_aligned(canvas, 64, 10, AlignCenter, AlignCenter, "Quiz Complete!");
         canvas_draw_line(canvas, 0, 18, 128, 18);
@@ -1387,7 +1429,7 @@ static void draw_manual_quiz(Canvas* canvas, ClaudeRemoteState* state) {
     canvas_set_font(canvas, FontPrimary);
     char header[32];
     snprintf(header, sizeof(header), "Quiz %d/%d",
-             state->quiz_index + 1, QUIZ_CARD_COUNT);
+             state->quiz_index + 1, state->quiz_count);
     canvas_draw_str(canvas, 2, 10, header);
 
     /* score + streak */
@@ -1562,16 +1604,8 @@ static void handle_manual_categories(ClaudeRemoteState* state, InputEvent* event
             state->section_index = 0;
             state->manual_view = ManualViewSections;
         } else {
-            /* quiz mode */
-            quiz_shuffle(state);
-            state->quiz_index = 0;
-            state->quiz_revealed = false;
-            state->quiz_correct = 0;
-            state->quiz_total = 0;
-            state->quiz_streak = 0;
-            state->quiz_best_streak = 0;
-            state->quiz_selected = -1;
-            state->quiz_answered = false;
+            /* quiz mode — show difficulty picker */
+            state->quiz_selecting = true;
             state->manual_view = ManualViewQuiz;
         }
         break;
@@ -1644,19 +1678,38 @@ static void handle_manual_read(ClaudeRemoteState* state, InputEvent* event) {
     }
 }
 
+static void quiz_start(ClaudeRemoteState* state, uint8_t count) {
+    quiz_shuffle(state);
+    state->quiz_selecting = false;
+    state->quiz_count = count;
+    state->quiz_index = 0;
+    state->quiz_revealed = false;
+    state->quiz_correct = 0;
+    state->quiz_total = 0;
+    state->quiz_streak = 0;
+    state->quiz_best_streak = 0;
+    state->quiz_selected = -1;
+    state->quiz_answered = false;
+}
+
 static void handle_manual_quiz(ClaudeRemoteState* state, InputEvent* event) {
+    /* difficulty picker */
+    if(state->quiz_selecting) {
+        switch(event->key) {
+        case InputKeyLeft:  quiz_start(state, 8);  return;
+        case InputKeyUp:    quiz_start(state, 16); return;
+        case InputKeyRight: quiz_start(state, 24); return;
+        case InputKeyBack:
+            state->manual_view = ManualViewCategories;
+            return;
+        default: return;
+        }
+    }
+
     /* completion screen */
-    if(state->quiz_index >= QUIZ_CARD_COUNT) {
+    if(state->quiz_index >= state->quiz_count) {
         if(event->key == InputKeyOk) {
-            quiz_shuffle(state);
-            state->quiz_index = 0;
-            state->quiz_revealed = false;
-            state->quiz_correct = 0;
-            state->quiz_total = 0;
-            state->quiz_streak = 0;
-            state->quiz_best_streak = 0;
-            state->quiz_selected = -1;
-            state->quiz_answered = false;
+            state->quiz_selecting = true;
         } else if(event->key == InputKeyBack) {
             state->manual_view = ManualViewCategories;
         }
@@ -1694,7 +1747,7 @@ static void handle_manual_quiz(ClaudeRemoteState* state, InputEvent* event) {
             }
             break;
         case InputKeyRight:
-            if(state->quiz_index < QUIZ_CARD_COUNT - 1) {
+            if(state->quiz_index < state->quiz_count - 1) {
                 state->quiz_index++;
                 state->quiz_revealed = false;
             }
